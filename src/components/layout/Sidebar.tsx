@@ -13,7 +13,6 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { LogoFull } from '@/components/shared/Logo'
-import { useChatStore } from '@/stores/chatStore'
 
 const navItems = [
   { to: '/feed', icon: LayoutDashboard, label: 'Лента задач' },
@@ -28,8 +27,7 @@ const navItems = [
 export function Sidebar() {
   const location = useLocation()
   const logout = useAuthStore((s) => s.logout)
-  const conversations = useChatStore((s) => s.conversations)
-  const totalUnread = conversations.reduce((sum, c) => sum + c.unreadCount, 0)
+  const totalUnread = 0 // unread count managed per-chat session
 
   return (
     <aside className="hidden lg:flex flex-col w-64 h-screen sticky top-0 border-r border-border bg-background/80 backdrop-blur-xl">

@@ -1,106 +1,87 @@
 import { create } from 'zustand'
-import type { ChatConversation, ChatMessage } from '@/types'
-import { mockConversations, mockMessages } from '@/data/mock'
+import { supabase } from '@/lib/supabase'
+import type { Message } from '@/types'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 
 interface ChatState {
-  conversations: ChatConversation[]
-  messages: Record<string, ChatMessage[]>
-  activeConversationId: string | null
-  isTyping: Record<string, boolean>
-  setActiveConversation: (id: string | null) => void
-  sendMessage: (conversationId: string, text: string, senderId: string) => void
-  markAsRead: (conversationId: string) => void
+  messages: Message[]
+  activeRequestId: string | null
+  isLoading: boolean
+  channel: RealtimeChannel | null
+  openChat: (requestId: string) => Promise<void>
+  closeChat: () => void
+  sendMessage: (requestId: string, senderId: string, text: string) => Promise<void>
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  conversations: mockConversations,
-  messages: mockMessages,
-  activeConversationId: null,
-  isTyping: {},
+  messages: [],
+  activeRequestId: null,
+  isLoading: false,
+  channel: null,
 
-  setActiveConversation: (id) => {
-    set({ activeConversationId: id })
-    if (id) get().markAsRead(id)
-  },
+  openChat: async (requestId) => {
+    // Unsubscribe from previous channel
+    get().closeChat()
 
-  sendMessage: (conversationId, text, senderId) => {
-    const msg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      conversationId,
-      senderId,
-      text,
-      createdAt: new Date().toISOString(),
-      read: false,
+    set({ isLoading: true, activeRequestId: requestId, messages: [] })
+
+    // Fetch existing messages
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*, profiles(id, first_name, last_name, avatar_url)')
+      .eq('request_id', requestId)
+      .order('created_at', { ascending: true })
+
+    if (!error) {
+      set({ messages: (data as Message[]) ?? [] })
     }
+    set({ isLoading: false })
 
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [conversationId]: [...(state.messages[conversationId] || []), msg],
-      },
-      conversations: state.conversations.map((c) =>
-        c.id === conversationId ? { ...c, lastMessage: msg, updatedAt: msg.createdAt } : c
-      ),
-    }))
+    // Subscribe to new messages via Realtime
+    const channel = supabase
+      .channel(`messages:${requestId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `request_id=eq.${requestId}`,
+        },
+        async (payload) => {
+          // Fetch the full row with profile join so UI has sender info
+          const { data: msg } = await supabase
+            .from('messages')
+            .select('*, profiles(id, first_name, last_name, avatar_url)')
+            .eq('id', payload.new['id'])
+            .single()
 
-    // Simulate typing and auto-reply
-    const otherParticipant = get().conversations.find((c) => c.id === conversationId)
-      ?.participants.find((p) => p !== senderId)
-
-    if (otherParticipant) {
-      set((state) => ({ isTyping: { ...state.isTyping, [conversationId]: true } }))
-
-      setTimeout(() => {
-        set((state) => ({ isTyping: { ...state.isTyping, [conversationId]: false } }))
-
-        const replies = [
-          'Хорошо, понял!',
-          'Отличная идея, давай так и сделаем.',
-          'Спасибо! Сейчас посмотрю.',
-          'Да, это правильный подход.',
-          'Окей, буду через 5 минут.',
-          'Согласен, давай обсудим подробнее.',
-        ]
-        const replyText = replies[Math.floor(Math.random() * replies.length)]!
-
-        const reply: ChatMessage = {
-          id: `msg-${Date.now()}-reply`,
-          conversationId,
-          senderId: otherParticipant,
-          text: replyText,
-          createdAt: new Date().toISOString(),
-          read: get().activeConversationId === conversationId,
+          if (msg) {
+            set((s) => ({
+              messages: [...s.messages, msg as Message],
+            }))
+          }
         }
+      )
+      .subscribe()
 
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [conversationId]: [...(state.messages[conversationId] || []), reply],
-          },
-          conversations: state.conversations.map((c) =>
-            c.id === conversationId
-              ? {
-                  ...c,
-                  lastMessage: reply,
-                  updatedAt: reply.createdAt,
-                  unreadCount: state.activeConversationId === conversationId ? 0 : c.unreadCount + 1,
-                }
-              : c
-          ),
-        }))
-      }, 1500 + Math.random() * 2000)
-    }
+    set({ channel })
   },
 
-  markAsRead: (conversationId) => {
-    set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === conversationId ? { ...c, unreadCount: 0 } : c
-      ),
-      messages: {
-        ...state.messages,
-        [conversationId]: (state.messages[conversationId] || []).map((m) => ({ ...m, read: true })),
-      },
-    }))
+  closeChat: () => {
+    const { channel } = get()
+    if (channel) {
+      supabase.removeChannel(channel)
+    }
+    set({ channel: null, activeRequestId: null, messages: [] })
+  },
+
+  sendMessage: async (requestId, senderId, text) => {
+    const { error } = await supabase
+      .from('messages')
+      .insert({ request_id: requestId, sender_id: senderId, text })
+
+    if (error) throw new Error(error.message)
+    // Realtime subscription will push the new message into state automatically
   },
 }))

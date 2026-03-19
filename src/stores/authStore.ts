@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { User as AppUser } from '@/types'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseMisconfigured } from '@/lib/supabase'
 import type { User as SupabaseUser, Session } from '@supabase/supabase-js'
 
 interface AuthState {
@@ -19,9 +19,10 @@ interface AuthState {
 
 function supabaseUserToAppUser(user: SupabaseUser): AppUser {
   const meta = user.user_metadata || {}
+  const fullName = [meta.first_name, meta.last_name].filter(Boolean).join(' ') || meta.name || meta.full_name || 'Пользователь'
   return {
     id: user.id,
-    name: meta.name || meta.full_name || 'Пользователь',
+    name: fullName,
     email: user.email || '',
     avatar: meta.avatar || `https://api.dicebear.com/9.x/notionists/svg?seed=${user.id}&backgroundColor=c0aede`,
     university: meta.university || '',
@@ -57,6 +58,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isInitialized: false,
 
   initialize: async () => {
+    if (supabaseMisconfigured) {
+      set({ isInitialized: true })
+      return
+    }
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) {
@@ -132,12 +137,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   register: async (formData) => {
     set({ isLoading: true })
     try {
+      const nameParts = formData.name.trim().split(/\s+/)
+      const firstName = nameParts[0] ?? ''
+      const lastName = nameParts.slice(1).join(' ') || ''
+
       const { data, error } = await withTimeout(
         supabase.auth.signUp({
           email: formData.email,
           password: formData.password,
           options: {
             data: {
+              first_name: firstName,
+              last_name: lastName,
               name: formData.name,
               university: formData.university,
               faculty: formData.faculty,

@@ -1,7 +1,17 @@
-export type TaskStatus = 'open' | 'in_progress' | 'closed'
-export type TaskUrgency = 'low' | 'medium' | 'high' | 'urgent'
-export type TaskFormat = 'online' | 'offline'
-export type TaskCategory =
+// ── Supabase DB row types ────────────────────────────────────────────────────
+
+export interface Profile {
+  id: string
+  first_name: string
+  last_name: string
+  email: string
+  avatar_url: string | null
+  rating: number
+}
+
+export type HelpRequestStatus = 'open' | 'in_progress' | 'closed'
+export type HelpRequestUrgency = 'low' | 'medium' | 'high' | 'urgent'
+export type HelpRequestCategory =
   | 'math'
   | 'programming'
   | 'physics'
@@ -11,6 +21,39 @@ export type TaskCategory =
   | 'economics'
   | 'design'
   | 'other'
+
+export interface HelpRequest {
+  id: string
+  creator_id: string
+  title: string
+  description: string
+  deadline: string
+  urgency: HelpRequestUrgency
+  category: HelpRequestCategory
+  is_online: boolean
+  location: string | null
+  status: HelpRequestStatus
+  created_at: string
+  // joined
+  profiles?: Profile
+}
+
+export interface Message {
+  id: string
+  request_id: string
+  sender_id: string
+  text: string
+  created_at: string
+  // joined
+  profiles?: Profile
+}
+
+// ── Legacy UI types (kept for non-refactored pages) ──────────────────────────
+
+export type TaskStatus = HelpRequestStatus
+export type TaskUrgency = HelpRequestUrgency
+export type TaskFormat = 'online' | 'offline'
+export type TaskCategory = HelpRequestCategory
 
 export type ResponseStatus = 'pending' | 'accepted' | 'rejected'
 

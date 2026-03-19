@@ -1,27 +1,35 @@
 import { create } from 'zustand'
-import type { Task, TaskCategory, TaskUrgency, TaskFormat, TaskResponse } from '@/types'
-import { mockTasks } from '@/data/mock'
+import { supabase } from '@/lib/supabase'
+import type { HelpRequest, HelpRequestCategory, HelpRequestUrgency, HelpRequestStatus } from '@/types'
 
 interface TaskFilters {
   search: string
-  category: TaskCategory | 'all'
-  urgency: TaskUrgency | 'all'
-  format: TaskFormat | 'all'
-  exchangeOnly: boolean
-  sortBy: 'newest' | 'urgent' | 'popular'
+  category: HelpRequestCategory | 'all'
+  urgency: HelpRequestUrgency | 'all'
+  format: 'online' | 'offline' | 'all'
+  sortBy: 'newest' | 'urgent'
 }
 
 interface TaskState {
-  tasks: Task[]
+  requests: HelpRequest[]
   filters: TaskFilters
   isLoading: boolean
+  error: string | null
   setFilters: (filters: Partial<TaskFilters>) => void
   resetFilters: () => void
-  addTask: (task: Task) => void
-  updateTask: (id: string, data: Partial<Task>) => void
-  addResponse: (taskId: string, response: TaskResponse) => void
-  acceptResponse: (taskId: string, responseId: string) => void
-  getFilteredTasks: () => Task[]
+  fetchRequests: () => Promise<void>
+  createRequest: (data: {
+    title: string
+    description: string
+    deadline: string
+    urgency: HelpRequestUrgency
+    category: HelpRequestCategory
+    is_online: boolean
+    location: string | null
+    creator_id: string
+  }) => Promise<HelpRequest>
+  updateStatus: (id: string, status: HelpRequestStatus) => Promise<void>
+  getFiltered: () => HelpRequest[]
 }
 
 const defaultFilters: TaskFilters = {
@@ -29,96 +37,80 @@ const defaultFilters: TaskFilters = {
   category: 'all',
   urgency: 'all',
   format: 'all',
-  exchangeOnly: false,
   sortBy: 'newest',
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
-  tasks: mockTasks,
+  requests: [],
   filters: defaultFilters,
   isLoading: false,
+  error: null,
 
-  setFilters: (newFilters) => {
-    set((state) => ({ filters: { ...state.filters, ...newFilters } }))
-  },
-
+  setFilters: (f) => set((s) => ({ filters: { ...s.filters, ...f } })),
   resetFilters: () => set({ filters: defaultFilters }),
 
-  addTask: (task) => {
-    set((state) => ({ tasks: [task, ...state.tasks] }))
+  fetchRequests: async () => {
+    set({ isLoading: true, error: null })
+    const { data, error } = await supabase
+      .from('help_requests')
+      .select('*, profiles(id, first_name, last_name, avatar_url, rating)')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      set({ error: error.message, isLoading: false })
+      return
+    }
+    set({ requests: (data as HelpRequest[]) ?? [], isLoading: false })
   },
 
-  updateTask: (id, data) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...data } : t)),
+  createRequest: async (payload) => {
+    const { data, error } = await supabase
+      .from('help_requests')
+      .insert({ ...payload, status: 'open' })
+      .select('*, profiles(id, first_name, last_name, avatar_url, rating)')
+      .single()
+
+    if (error) throw new Error(error.message)
+    const req = data as HelpRequest
+    set((s) => ({ requests: [req, ...s.requests] }))
+    return req
+  },
+
+  updateStatus: async (id, status) => {
+    const { error } = await supabase
+      .from('help_requests')
+      .update({ status })
+      .eq('id', id)
+
+    if (error) throw new Error(error.message)
+    set((s) => ({
+      requests: s.requests.map((r) => (r.id === id ? { ...r, status } : r)),
     }))
   },
 
-  addResponse: (taskId, response) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === taskId ? { ...t, responses: [...t.responses, response] } : t
-      ),
-    }))
-  },
-
-  acceptResponse: (taskId, responseId) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) => {
-        if (t.id !== taskId) return t
-        const updatedResponses = t.responses.map((r) =>
-          r.id === responseId ? { ...r, status: 'accepted' as const } : r
-        )
-        const acceptedResp = t.responses.find((r) => r.id === responseId)
-        const newAccepted = acceptedResp
-          ? [...t.acceptedExecutors, acceptedResp.userId]
-          : t.acceptedExecutors
-        return {
-          ...t,
-          responses: updatedResponses,
-          acceptedExecutors: newAccepted,
-          status: newAccepted.length >= t.maxExecutors ? 'in_progress' as const : t.status,
-        }
-      }),
-    }))
-  },
-
-  getFilteredTasks: () => {
-    const { tasks, filters } = get()
-    let filtered = [...tasks]
+  getFiltered: () => {
+    const { requests, filters } = get()
+    let list = [...requests]
 
     if (filters.search) {
       const q = filters.search.toLowerCase()
-      filtered = filtered.filter(
-        (t) => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)
+      list = list.filter(
+        (r) => r.title.toLowerCase().includes(q) || r.description.toLowerCase().includes(q)
       )
     }
-    if (filters.category !== 'all') {
-      filtered = filtered.filter((t) => t.category === filters.category)
-    }
-    if (filters.urgency !== 'all') {
-      filtered = filtered.filter((t) => t.urgency === filters.urgency)
-    }
+    if (filters.category !== 'all') list = list.filter((r) => r.category === filters.category)
+    if (filters.urgency !== 'all') list = list.filter((r) => r.urgency === filters.urgency)
     if (filters.format !== 'all') {
-      filtered = filtered.filter((t) => t.format === filters.format)
-    }
-    if (filters.exchangeOnly) {
-      filtered = filtered.filter((t) => t.allowExchange)
+      const isOnline = filters.format === 'online'
+      list = list.filter((r) => r.is_online === isOnline)
     }
 
-    switch (filters.sortBy) {
-      case 'newest':
-        filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        break
-      case 'urgent':
-        const urgencyOrder = { urgent: 0, high: 1, medium: 2, low: 3 }
-        filtered.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency])
-        break
-      case 'popular':
-        filtered.sort((a, b) => b.responses.length - a.responses.length)
-        break
+    if (filters.sortBy === 'urgent') {
+      const order: Record<HelpRequestUrgency, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
+      list.sort((a, b) => order[a.urgency] - order[b.urgency])
     }
+    // 'newest' is already the default from the DB query
 
-    return filtered
+    return list
   },
 }))

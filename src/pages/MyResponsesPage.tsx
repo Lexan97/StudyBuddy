@@ -1,84 +1,44 @@
-import { useState } from 'react'
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import {
-  Send,
-  CheckCircle,
-  Clock,
-  XCircle,
-  ArrowRightLeft,
-  Calendar,
-} from 'lucide-react'
-import { cn, formatDate, timeAgo, getInitials } from '@/lib/utils'
+import { Send, MessageCircle } from 'lucide-react'
+import { formatDate } from '@/lib/utils'
 import { useTaskStore } from '@/stores/taskStore'
 import { useAuthStore } from '@/stores/authStore'
-import { CATEGORY_LABELS } from '@/types'
+import { CATEGORY_LABELS, URGENCY_LABELS } from '@/types'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { mockUsers } from '@/data/mock'
-import type { ResponseStatus } from '@/types'
 
-type Tab = 'all' | ResponseStatus
-
+// In the new schema, "responses" are handled via the chat (messages table).
+// This page shows open requests from OTHER users that the current user can help with.
 export default function MyResponsesPage() {
-  const tasks = useTaskStore((s) => s.tasks)
+  const { requests, fetchRequests, isLoading } = useTaskStore()
   const user = useAuthStore((s) => s.user)
-  const [tab, setTab] = useState<Tab>('all')
 
-  const myResponses = tasks
-    .flatMap((task) =>
-      task.responses
-        .filter((r) => r.userId === user?.id)
-        .map((r) => ({ ...r, task }))
-    )
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  useEffect(() => {
+    fetchRequests()
+  }, [fetchRequests])
 
-  const filtered = tab === 'all' ? myResponses : myResponses.filter((r) => r.status === tab)
-
-  const tabs: { key: Tab; label: string; icon: typeof Send; count: number }[] = [
-    { key: 'all', label: 'Все', icon: Send, count: myResponses.length },
-    { key: 'pending', label: 'Ожидают', icon: Clock, count: myResponses.filter((r) => r.status === 'pending').length },
-    { key: 'accepted', label: 'Приняты', icon: CheckCircle, count: myResponses.filter((r) => r.status === 'accepted').length },
-    { key: 'rejected', label: 'Отклонены', icon: XCircle, count: myResponses.filter((r) => r.status === 'rejected').length },
-  ]
+  // Requests created by others that are still open
+  const available = requests.filter(
+    (r) => r.creator_id !== user?.id && r.status === 'open'
+  )
 
   return (
     <div className="max-w-5xl mx-auto px-4 lg:px-8 py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">Мои отклики</h1>
-        <p className="text-sm text-muted-foreground mt-1">Ваши отклики на задачи других студентов</p>
+        <h1 className="text-2xl font-bold">Помочь другим</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Открытые запросы от других пользователей — напишите в чат, чтобы предложить помощь
+        </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-xl bg-surface border border-border mb-6">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              'flex-1 relative px-4 py-2.5 rounded-lg text-sm font-medium transition-all',
-              tab === t.key ? 'text-white' : 'text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {tab === t.key && (
-              <motion.div
-                layoutId="responses-tab"
-                className="absolute inset-0 bg-muted rounded-lg"
-                transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-              />
-            )}
-            <span className="relative">
-              {t.label} <span className="text-muted-foreground">({t.count})</span>
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* Responses */}
-      {filtered.length === 0 ? (
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Загрузка...</p>
+      ) : available.length === 0 ? (
         <EmptyState
           icon={Send}
-          title="Нет откликов"
-          description="Откликайтесь на задачи в ленте, чтобы помогать другим студентам"
+          title="Нет доступных запросов"
+          description="Все запросы закрыты или вы единственный пользователь"
           action={
             <Link
               to="/feed"
@@ -90,64 +50,47 @@ export default function MyResponsesPage() {
         />
       ) : (
         <div className="space-y-3">
-          {filtered.map((resp, i) => {
-            const author = mockUsers.find((u) => u.id === resp.task.authorId)
+          {available.map((req, i) => {
+            const authorName = req.profiles
+              ? `${req.profiles.first_name} ${req.profiles.last_name}`
+              : 'Аноним'
+            const avatar =
+              req.profiles?.avatar_url ??
+              `https://api.dicebear.com/9.x/notionists/svg?seed=${req.creator_id}&backgroundColor=c0aede`
+
             return (
               <motion.div
-                key={resp.id}
+                key={req.id}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
+                transition={{ delay: i * 0.04 }}
+                className="rounded-xl border border-border bg-card p-5"
               >
-                <Link
-                  to={`/task/${resp.task.id}`}
-                  className="block rounded-xl border border-border bg-card hover:bg-accent hover:border-primary/30 transition-all p-5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium',
-                            resp.status === 'pending' && 'bg-yellow-500/10 text-yellow-400',
-                            resp.status === 'accepted' && 'bg-emerald-500/10 text-emerald-400',
-                            resp.status === 'rejected' && 'bg-red-500/10 text-red-400'
-                          )}
-                        >
-                          {resp.status === 'pending' && <><Clock className="w-2.5 h-2.5" /> Ожидает</>}
-                          {resp.status === 'accepted' && <><CheckCircle className="w-2.5 h-2.5" /> Принят</>}
-                          {resp.status === 'rejected' && <><XCircle className="w-2.5 h-2.5" /> Отклонён</>}
-                        </span>
-                        {resp.isExchangeOffer && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400">
-                            <ArrowRightLeft className="w-2.5 h-2.5" /> Обмен
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-sm font-semibold truncate">{resp.task.title}</h3>
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{resp.message}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Calendar className="w-3 h-3" />
-                        {formatDate(resp.task.deadline)}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-1 block">{timeAgo(resp.createdAt)}</span>
-                    </div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold truncate">{req.title}</h3>
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{req.description}</p>
                   </div>
+                  <div className="text-right shrink-0 text-xs text-muted-foreground">
+                    <p>{URGENCY_LABELS[req.urgency]}</p>
+                    <p>до {formatDate(req.deadline)}</p>
+                  </div>
+                </div>
 
-                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-                    {author?.avatar ? (
-                      <img src={author.avatar} alt="" className="w-5 h-5 rounded-full bg-muted" />
-                    ) : (
-                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-[8px] font-bold">
-                        {author ? getInitials(author.name) : '?'}
-                      </div>
-                    )}
-                    <span className="text-xs text-muted-foreground">{author?.name}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">{CATEGORY_LABELS[resp.task.category]}</span>
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
+                  <div className="flex items-center gap-2">
+                    <img src={avatar} alt="" className="w-5 h-5 rounded-full bg-muted" />
+                    <span className="text-xs text-muted-foreground">{authorName}</span>
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <span className="text-xs text-muted-foreground">{CATEGORY_LABELS[req.category]}</span>
                   </div>
-                </Link>
+                  <Link
+                    to="/chats"
+                    className="flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" /> Написать
+                  </Link>
+                </div>
               </motion.div>
             )
           })}

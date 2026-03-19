@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useTaskStore } from '@/stores/taskStore'
 import { CATEGORY_LABELS, URGENCY_LABELS } from '@/types'
-import type { TaskCategory, TaskUrgency, TaskFormat } from '@/types'
+import type { TaskCategory, TaskUrgency } from '@/types'
 
 export function TaskFilters() {
   const { filters, setFilters, resetFilters } = useTaskStore()
@@ -13,8 +13,7 @@ export function TaskFilters() {
   const hasActiveFilters =
     filters.category !== 'all' ||
     filters.urgency !== 'all' ||
-    filters.format !== 'all' ||
-    filters.exchangeOnly
+    filters.format !== 'all'
 
   return (
     <div className="space-y-4">
@@ -64,7 +63,7 @@ export function TaskFilters() {
                   Сортировка
                 </label>
                 <div className="flex gap-2">
-                  {([['newest', 'Новые'], ['urgent', 'Срочные'], ['popular', 'Популярные']] as const).map(
+                  {([['newest', 'Новые'], ['urgent', 'Срочные']] as const).map(
                     ([value, label]) => (
                       <button
                         key={value}
@@ -151,47 +150,28 @@ export function TaskFilters() {
                 </div>
               </div>
 
-              {/* Format + Exchange */}
-              <div className="flex flex-wrap gap-4">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block">
-                    Формат
-                  </label>
-                  <div className="flex gap-2">
-                    {([['all', 'Все'], ['online', 'Онлайн'], ['offline', 'Оффлайн']] as [TaskFormat | 'all', string][]).map(
-                      ([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => setFilters({ format: value })}
-                          className={cn(
-                            'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
-                            filters.format === value
-                              ? 'bg-emerald-500/20 text-emerald-400'
-                              : 'bg-muted text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          {label}
-                        </button>
-                      )
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block">
-                    Обмен задачами
-                  </label>
-                  <button
-                    onClick={() => setFilters({ exchangeOnly: !filters.exchangeOnly })}
-                    className={cn(
-                      'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
-                      filters.exchangeOnly
-                        ? 'bg-amber-500/20 text-amber-400'
-                        : 'bg-muted text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    Только с обменом
-                  </button>
+              {/* Format */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block">
+                  Формат
+                </label>
+                <div className="flex gap-2">
+                  {([['all', 'Все'], ['online', 'Онлайн'], ['offline', 'Оффлайн']] as ['all' | 'online' | 'offline', string][]).map(
+                    ([value, label]) => (
+                      <button
+                        key={value}
+                        onClick={() => setFilters({ format: value })}
+                        className={cn(
+                          'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
+                          filters.format === value
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : 'bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {label}
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
 

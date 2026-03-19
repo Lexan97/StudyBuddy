@@ -1,43 +1,52 @@
 import { useState, useRef, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Send, ArrowLeft, Search, MessageCircle } from 'lucide-react'
-import { cn, timeAgo, getInitials, formatTime } from '@/lib/utils'
+import { motion } from 'framer-motion'
+import { Send, ArrowLeft, MessageCircle, AlertCircle } from 'lucide-react'
+import { cn, formatTime, getInitials } from '@/lib/utils'
 import { useChatStore } from '@/stores/chatStore'
+import { useTaskStore } from '@/stores/taskStore'
 import { useAuthStore } from '@/stores/authStore'
-import { mockUsers } from '@/data/mock'
 import { useIsMobile } from '@/hooks/useMediaQuery'
 import { EmptyState } from '@/components/shared/EmptyState'
 
 export default function ChatsPage() {
   const user = useAuthStore((s) => s.user)
-  const { conversations, messages, activeConversationId, setActiveConversation, sendMessage, isTyping } = useChatStore()
+  const { requests, fetchRequests, isLoading: requestsLoading } = useTaskStore()
+  const { messages, activeRequestId, isLoading: chatLoading, openChat, closeChat, sendMessage } = useChatStore()
   const isMobile = useIsMobile()
+
   const [input, setInput] = useState('')
-  const [search, setSearch] = useState('')
+  const [sendError, setSendError] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const activeConv = conversations.find((c) => c.id === activeConversationId)
-  const activeMessages = activeConversationId ? messages[activeConversationId] || [] : []
+  // Only show requests where the current user is creator or has sent a message
+  // For simplicity: show all open requests as potential chats
+  const chatRooms = requests.filter((r) => r.status !== 'closed')
 
-  const filteredConversations = conversations.filter((conv) => {
-    if (!search) return true
-    const other = mockUsers.find((u) => conv.participants.includes(u.id) && u.id !== user?.id)
-    return other?.name.toLowerCase().includes(search.toLowerCase())
-  }).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+  useEffect(() => {
+    fetchRequests()
+    return () => closeChat()
+  }, [fetchRequests, closeChat])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [activeMessages.length])
+  }, [messages.length])
 
   useEffect(() => {
-    if (activeConversationId) inputRef.current?.focus()
-  }, [activeConversationId])
+    if (activeRequestId) inputRef.current?.focus()
+  }, [activeRequestId])
 
-  const handleSend = () => {
-    if (!input.trim() || !activeConversationId || !user) return
-    sendMessage(activeConversationId, input.trim(), user.id)
+  const handleSend = async () => {
+    if (!input.trim() || !activeRequestId || !user) return
+    setSendError('')
+    const text = input.trim()
     setInput('')
+    try {
+      await sendMessage(activeRequestId, user.id, text)
+    } catch {
+      setSendError('Не удалось отправить сообщение')
+      setInput(text)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -47,190 +56,150 @@ export default function ChatsPage() {
     }
   }
 
-  const getOtherUser = (participantIds: string[]) => {
-    return mockUsers.find((u) => participantIds.includes(u.id) && u.id !== user?.id)
-  }
-
-  const showConversationList = !isMobile || !activeConversationId
+  const activeRoom = chatRooms.find((r) => r.id === activeRequestId)
+  const showList = !isMobile || !activeRequestId
 
   return (
     <div className="flex h-[calc(100vh-4rem)]">
-      {/* Conversation list */}
-      <AnimatePresence>
-        {showConversationList && (
-          <motion.div
-            initial={isMobile ? { x: '-100%' } : false}
-            animate={{ x: 0 }}
-            exit={{ x: '-100%' }}
-            className={cn(
-              'flex flex-col border-r border-border bg-card',
-              isMobile ? 'w-full' : 'w-80 shrink-0'
-            )}
-          >
-            <div className="p-4 border-b border-border">
-              <h2 className="text-lg font-bold mb-3">Чаты</h2>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="Поиск..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-muted border border-border text-sm placeholder:text-muted-foreground focus:outline-none focus:border-emerald-500/50 transition-all"
-                />
-              </div>
-            </div>
+      {/* Room list */}
+      {showList && (
+        <div
+          className={cn(
+            'flex flex-col border-r border-border bg-card',
+            isMobile ? 'w-full' : 'w-80 shrink-0'
+          )}
+        >
+          <div className="p-4 border-b border-border">
+            <h2 className="text-lg font-bold">Чаты по запросам</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Выберите запрос для общения</p>
+          </div>
 
-            <div className="flex-1 overflow-y-auto">
-              {filteredConversations.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  Нет диалогов
-                </div>
-              ) : (
-                filteredConversations.map((conv) => {
-                  const other = getOtherUser(conv.participants)
-                  const isActive = conv.id === activeConversationId
-                  return (
-                    <button
-                      key={conv.id}
-                      onClick={() => setActiveConversation(conv.id)}
-                      className={cn(
-                        'w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface transition-colors',
-                        isActive && 'bg-white/[0.05]'
-                      )}
+          <div className="flex-1 overflow-y-auto">
+            {requestsLoading ? (
+              <div className="p-4 text-sm text-muted-foreground">Загрузка...</div>
+            ) : chatRooms.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Нет активных запросов
+              </div>
+            ) : (
+              chatRooms.map((room) => {
+                const isActive = room.id === activeRequestId
+                const authorName = room.profiles
+                  ? `${room.profiles.first_name} ${room.profiles.last_name}`
+                  : 'Аноним'
+                const avatar =
+                  room.profiles?.avatar_url ??
+                  `https://api.dicebear.com/9.x/notionists/svg?seed=${room.creator_id}&backgroundColor=c0aede`
+
+                return (
+                  <button
+                    key={room.id}
+                    onClick={() => openChat(room.id)}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.03] transition-colors',
+                      isActive && 'bg-white/[0.05]'
+                    )}
+                  >
+                    <img
+                      src={avatar}
+                      alt=""
+                      className="w-10 h-10 rounded-full bg-muted shrink-0"
+                      onError={(e) => {
+                        const t = e.currentTarget
+                        t.style.display = 'none'
+                        const fallback = t.nextElementSibling as HTMLElement | null
+                        if (fallback) fallback.style.display = 'flex'
+                      }}
+                    />
+                    <div
+                      className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 items-center justify-center text-xs font-bold shrink-0 hidden"
                     >
-                      <div className="relative shrink-0">
-                        {other?.avatar ? (
-                          <img src={other.avatar} alt="" className="w-10 h-10 rounded-full bg-muted" />
-                        ) : (
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-xs font-bold">
-                            {other ? getInitials(other.name) : '?'}
-                          </div>
-                        )}
-                        {other?.isOnline && (
-                          <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-background" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium truncate">{other?.name}</p>
-                          {conv.lastMessage && (
-                            <span className="text-[10px] text-muted-foreground shrink-0 ml-2">
-                              {formatTime(conv.lastMessage.createdAt)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs text-muted-foreground truncate">
-                            {conv.lastMessage
-                              ? conv.lastMessage.senderId === user?.id
-                                ? `Вы: ${conv.lastMessage.text}`
-                                : conv.lastMessage.text
-                              : 'Нет сообщений'}
-                          </p>
-                          {conv.unreadCount > 0 && (
-                            <span className="ml-2 flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-[10px] font-bold text-white shrink-0">
-                              {conv.unreadCount}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                  )
-                })
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                      {getInitials(authorName)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{room.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">{authorName}</p>
+                    </div>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Chat window */}
-      {activeConversationId && activeConv ? (
+      {activeRequestId && activeRoom ? (
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Chat header */}
-          {(() => {
-            const other = getOtherUser(activeConv.participants)
-            return (
-              <div className="flex items-center gap-3 px-4 lg:px-6 py-3 border-b border-border bg-card">
-                {isMobile && (
-                  <button
-                    onClick={() => setActiveConversation(null)}
-                    className="p-1.5 rounded-lg hover:bg-muted"
-                  >
-                    <ArrowLeft className="w-5 h-5" />
-                  </button>
-                )}
-                <div className="relative">
-                  {other?.avatar ? (
-                    <img src={other.avatar} alt="" className="w-9 h-9 rounded-full bg-muted" />
-                  ) : (
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-xs font-bold">
-                      {other ? getInitials(other.name) : '?'}
-                    </div>
-                  )}
-                  {other?.isOnline && (
-                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-background" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold">{other?.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {other?.isOnline ? 'Онлайн' : `Был(а) ${timeAgo(other?.lastSeen || '')}`}
-                  </p>
-                </div>
-              </div>
-            )
-          })()}
+          {/* Header */}
+          <div className="flex items-center gap-3 px-4 lg:px-6 py-3 border-b border-border bg-card">
+            {isMobile && (
+              <button onClick={() => closeChat()} className="p-1.5 rounded-lg hover:bg-muted">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <div>
+              <p className="text-sm font-semibold line-clamp-1">{activeRoom.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {activeRoom.profiles
+                  ? `${activeRoom.profiles.first_name} ${activeRoom.profiles.last_name}`
+                  : 'Аноним'}
+              </p>
+            </div>
+          </div>
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 space-y-3">
-            {activeMessages.map((msg) => {
-              const isMine = msg.senderId === user?.id
-              return (
-                <motion.div
-                  key={msg.id}
-                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  className={cn('flex', isMine ? 'justify-end' : 'justify-start')}
-                >
-                  <div
-                    className={cn(
-                      'max-w-[75%] px-4 py-2.5 rounded-2xl text-sm',
-                      isMine
-                        ? 'bg-emerald-600 text-white rounded-br-md'
-                        : 'bg-muted text-foreground rounded-bl-md'
-                    )}
-                  >
-                    <p>{msg.text}</p>
-                    <p className={cn('text-[10px] mt-1', isMine ? 'text-white/60' : 'text-muted-foreground')}>
-                      {formatTime(msg.createdAt)}
-                    </p>
-                  </div>
-                </motion.div>
-              )
-            })}
+            {chatLoading ? (
+              <p className="text-sm text-muted-foreground text-center pt-8">Загрузка сообщений...</p>
+            ) : messages.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center pt-8">
+                Начните общение первым!
+              </p>
+            ) : (
+              messages.map((msg) => {
+                const isMine = msg.sender_id === user?.id
+                const senderName = msg.profiles
+                  ? `${msg.profiles.first_name} ${msg.profiles.last_name}`
+                  : 'Аноним'
 
-            {/* Typing indicator */}
-            {isTyping[activeConversationId] && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex justify-start"
-              >
-                <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3">
-                  <div className="flex gap-1">
-                    <span className="w-2 h-2 rounded-full bg-muted-foreground typing-dot-1" />
-                    <span className="w-2 h-2 rounded-full bg-muted-foreground typing-dot-2" />
-                    <span className="w-2 h-2 rounded-full bg-muted-foreground typing-dot-3" />
-                  </div>
-                </div>
-              </motion.div>
+                return (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    className={cn('flex', isMine ? 'justify-end' : 'justify-start')}
+                  >
+                    <div
+                      className={cn(
+                        'max-w-[75%] px-4 py-2.5 rounded-2xl text-sm',
+                        isMine
+                          ? 'bg-emerald-600 text-white rounded-br-md'
+                          : 'bg-muted text-foreground rounded-bl-md'
+                      )}
+                    >
+                      {!isMine && (
+                        <p className="text-[10px] font-medium mb-1 text-emerald-400">{senderName}</p>
+                      )}
+                      <p>{msg.text}</p>
+                      <p className={cn('text-[10px] mt-1', isMine ? 'text-white/60' : 'text-muted-foreground')}>
+                        {formatTime(msg.created_at)}
+                      </p>
+                    </div>
+                  </motion.div>
+                )
+              })
             )}
             <div ref={messagesEndRef} />
           </div>
 
           {/* Input */}
           <div className="px-4 lg:px-6 py-3 border-t border-border bg-card">
+            {sendError && (
+              <p className="text-xs text-red-400 flex items-center gap-1 mb-2">
+                <AlertCircle className="w-3 h-3" />{sendError}
+              </p>
+            )}
             <div className="flex items-center gap-3">
               <input
                 ref={inputRef}
@@ -256,8 +225,8 @@ export default function ChatsPage() {
           <div className="flex-1 flex items-center justify-center">
             <EmptyState
               icon={MessageCircle}
-              title="Выберите диалог"
-              description="Нажмите на диалог слева, чтобы начать общение"
+              title="Выберите запрос"
+              description="Нажмите на запрос слева, чтобы открыть чат"
             />
           </div>
         )
